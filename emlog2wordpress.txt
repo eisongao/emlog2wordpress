@@ -1,0 +1,407 @@
+版本：emlog5.3.1
+wordpress4.5.4
+
+emlog_attachment	文章附件		wp_postmeta
+emlog_blog		博文			wp_posts
+emlog_comment		评论			wp_comments
+emlog_gbook		EMLOG独立留言表		
+emlog_link		友链			
+emlog_navi		顶部菜单		wp_postmeta
+emlog_sort		分类排序		wp_terms
+emlog_tag		标签			wp_terms
+emlog_twitter		说说
+
+
+说明：
+
+emlog_black		是我从线上博客中备份下来的数据库
+wp_import		当前版本的wp表结构（不含数据，纯粹的表结构）
+concat('http://blog.leapsea.com/?p=',b.gid)	替换为你自己的域名
+
+
+--  1、博文  --
+--  id = gid;
+--  post_author = 1; 是当前用户的ID，一般都是1，可以按照实际情况修改
+--  post_date = FROM_UNIXTIME(date,'%Y-%m-%d %T'); 将时间戳转换成date类型
+--  post_date_gmt = FROM_UNIXTIME(date,'%Y-%m-%d %T'); 将时间戳转换成date类型
+--  post_content = content;
+--  post_title = title;
+--  post_excerpt = excerpt;  不知道干什么的(貌似是概要)
+--  post_status = 'publish';  默认值    草稿的话是draft    inherit 为不可见的
+--  comment_status = 'open';  默认值    草稿的话是closed
+--  ping_status = 'open';  默认值    草稿的话是closed
+--  post_password = '';  凭密码查看
+--  post_name = ''; // TODO 不知道干什么的，先把alias传进去。。。不能传，否则会找不到....一定要有=title
+--  to_ping = '';  搜索引擎抓取相关
+--  pinged = '';  搜索引擎抓取相关
+--  post_modified = FROM_UNIXTIME(date,'%Y-%m-%d %T'); 将时间戳转换成date类型
+--  post_modified_gmt = FROM_UNIXTIME(date,'%Y-%m-%d %T'); 将时间戳转换成date类型
+--  post_content_filtered = ''; // TODO 不知道干什么的
+--  post_parent = 0;  如果是图片附件，则此值为所属博文的ID
+--  guid = '';  链接地址.....注意.....注意..该字段为你设置里面设置的固定链接规范（10月21号。经测试，默认的就行）..注意.....注意.....这个是个性化网址 default http://your.domain/?p=1
+--  menu_order = 0;  导入菜单的时候需要
+--  post_type = 'post';  博文类型
+--  post_mime_type = '';  资源类型
+--  comment_count = 0;  评论总数
+
+
+
+-- --------------------------------------------------
+--
+--  1、博文
+--  单urlencode的话会有很多+++号，并且结果也不对
+-- --------------------------------------------------
+DELETE FROM `wp_import`.`wp_posts`;  -- 先清空数据表
+TRUNCATE TABLE `wp_import`.`wp_posts`;  -- 重置自增列  从MySQL 5.0.13开始TRUNCATE就能重置自增列为0.myisam和innode都是如此
+
+insert into `wp_import`.`wp_posts`
+select b.gid
+,1
+,FROM_UNIXTIME(b.date,'%Y-%m-%d %T')
+,FROM_UNIXTIME(b.date,'%Y-%m-%d %T')
+,b.content
+,b.title
+,b.excerpt
+,case when b.hide='y' then 'draft' else 'publish' end
+,case when b.hide='y' then 'closed' else 'open' end
+,case when b.hide='y' then 'closed' else 'open' end
+,''
+,concat(urlencode(b.title))
+,''
+,''
+,FROM_UNIXTIME(b.date,'%Y-%m-%d %T')
+,FROM_UNIXTIME(b.date,'%Y-%m-%d %T')
+,''
+,0
+,concat('http://blog.leapsea.com/?p=',b.gid)
+,0
+,'post'
+,''
+,'0'
+from `emlog_back`.emlog_blog as b;
+
+
+
+
+-- select b.gid,b.title,concat(urlencode(b.title)) from `emlog_back`.emlog_blog as b;
+
+-- --------------------------------------------------
+--
+--  2、分组  为防止关键词跟分组重名，先导入分组
+--
+-- --------------------------------------------------
+DELETE FROM `wp_import`.`wp_terms`;
+TRUNCATE TABLE `wp_import`.`wp_terms`;
+-- -----------------------------
+-- 先插入一级分类
+-- -----------------------------
+insert into `wp_import`.`wp_terms`
+select null
+,s.sortname
+,case when s.alias='' then s.sortname else s.alias end
+,0
+from `emlog_back`.emlog_sort as s
+where s.pid=0;
+
+-- -----------------------------
+-- 插入二级分类    --  t.term_id 后面有用，不要改
+-- -----------------------------
+insert into `wp_import`.`wp_terms`
+select null
+,s2.sortname
+,case when s2.alias='' then s2.sortname else s2.alias end
+,t.term_id
+from (wp_import.wp_terms as t
+left join `emlog_back`.emlog_sort as s
+on t.name=s.sortname)
+left join `emlog_back`.emlog_sort as s2
+on s.sid=s2.pid
+where s2.sid is not null;
+-- -----------------------------
+-- wp_term_taxonomy --
+-- -----------------------------
+DELETE FROM `wp_import`.`wp_term_taxonomy`;
+TRUNCATE TABLE `wp_import`.`wp_term_taxonomy`;
+-- -----------------------------
+-- 先插入一级分类
+-- -----------------------------
+insert into `wp_import`.`wp_term_taxonomy`
+select null
+,t.term_id
+,'category'
+,s.description
+,0
+,0
+from `emlog_back`.emlog_sort as s
+left join `wp_import`.`wp_terms` as t
+on t.name=s.sortname
+where s.pid=0;
+
+-- -----------------------------
+-- 插入二级分类
+-- -----------------------------
+insert into `wp_import`.`wp_term_taxonomy`
+select null
+,t.term_id
+,'category'
+,s.description
+,t.term_group
+,0
+from wp_import.wp_terms as t
+left join `emlog_back`.emlog_sort as s
+on t.name=s.sortname
+where t.term_group>0;
+-- -----------------------------
+-- 将上面占用的字段更新为0
+-- -----------------------------
+update `wp_import`.`wp_terms` set term_group=0;
+
+-- -----------------------------
+-- wp_term_relationships
+-- -----------------------------
+DELETE FROM `wp_import`.`wp_term_relationships`;
+TRUNCATE TABLE `wp_import`.`wp_term_relationships`;
+
+insert into `wp_import`.`wp_term_relationships`
+select b.gid
+,ttt.term_taxonomy_id
+,0
+ from ((`emlog_back`.emlog_blog as b
+ left join `emlog_back`.emlog_sort as s
+ on b.sortid=s.sid)
+ left join `wp_import`.wp_terms tt
+ on tt.name=s.sortname)
+ left join `wp_import`.wp_term_taxonomy ttt
+ on tt.term_id=ttt.term_id
+ where ttt.term_taxonomy_id is not null;
+
+
+
+
+
+
+
+
+-- --------------------------------------------------
+--  3、标签  --  99999后面使用
+-- --------------------------------------------------
+insert into `wp_import`.`wp_terms`
+select null
+,b.tagname
+,b.tagname
+,99999
+from `emlog_back`.emlog_tag as b;
+
+-- -----------------------------
+-- post_tag 标签    nav_menu 顶部菜单    category  分类
+-- -----------------------------
+insert into `wp_import`.`wp_term_taxonomy`
+select null
+,t.term_id
+,'post_tag'
+,''
+,0
+,func_get_splitStringTotal(tt.gid,',')-2
+from `wp_import`.`wp_terms` as t
+left join `emlog_back`.emlog_tag as tt
+on t.name=tt.tagname
+where t.term_group=99999;
+
+
+
+-- -----------------------------
+-- wp_term_relationships
+-- -----------------------------
+insert into `wp_import`.`wp_term_relationships`
+select b.gid
+,ttt.term_taxonomy_id
+,0
+ from ((`emlog_back`.emlog_blog as b
+ left join `emlog_back`.emlog_tag as t
+ on LOCATE(concat(',',b.gid,','), t.gid)>0)
+ left join `wp_import`.wp_terms tt
+ on tt.name=t.tagname)
+ left join `wp_import`.wp_term_taxonomy ttt
+ on tt.term_id=ttt.term_id
+ where tt.term_group=99999;
+
+
+-- -----------------------------
+-- 将上面占用的字段更新为0
+-- -----------------------------
+update `wp_import`.`wp_terms` set term_group=0 where term_group=99999;
+-- --------------------------------------------------
+-- end
+-- 将  `wp_post`  `wp_terms`  `wp_term_taxonomy`  `wp_term_relationships`  导入线上数据库就行了
+-- --------------------------------------------------
+
+
+
+
+
+
+
+
+
+
+
+-----------------------end--已下为测试脚本--------------------------
+select s.sid,s2.* from (wp_import.wp_terms as t
+left join emlog_back.emlog_sort as s
+on t.name=s.sortname)
+left join emlog_back.emlog_sort as s2
+on s.sid=s2.pid
+where s2.sid is not null;
+
+
+
+ -- 没有子项的一级项
+SELECT * 
+FROM  `emlog_sort` AS a
+LEFT JOIN  `emlog_sort` AS b ON a.sid = b.pid
+WHERE a.pid =0
+AND b.sid IS NULL 
+ORDER BY b.sid
+LIMIT 0 , 30
+
+SELECT * 
+FROM  `emlog_sort` AS a
+LEFT JOIN `emlog_sort` AS b ON a.sid = b.pid
+ORDER BY a.sid
+
+
+
+-- --------------------------------------------------
+-- -----------导入数据库
+-- --------------------------------------------------
+DELETE FROM `wordpress`.`wp_posts`;
+TRUNCATE TABLE `wordpress`.`wp_posts`;
+insert into `wordpress`.`wp_posts`
+select * from `wp_import`.`wp_posts`;
+
+DELETE FROM `wordpress`.`wp_terms`;
+TRUNCATE TABLE `wordpress`.`wp_terms`;
+insert into `wordpress`.`wp_terms`
+select * from `wp_import`.`wp_terms`;
+
+DELETE FROM `wordpress`.`wp_term_taxonomy`;
+TRUNCATE TABLE `wordpress`.`wp_term_taxonomy`;
+insert into `wordpress`.`wp_term_taxonomy`
+select * from `wp_import`.`wp_term_taxonomy`;
+
+DELETE FROM `wordpress`.`wp_term_relationships`;
+TRUNCATE TABLE `wordpress`.`wp_term_relationships`;
+insert into `wordpress`.`wp_term_relationships`
+select * from `wp_import`.`wp_term_relationships`;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+-----------------------------------------------
+--附送类似split的函数
+DELIMITER $$    
+CREATE FUNCTION `func_get_splitStringTotal`(    
+f_string varchar(10000),f_delimiter varchar(50)    
+) RETURNS int(11)    
+BEGIN    
+  return 1+(length(f_string) - length(replace(f_string,f_delimiter,'')));    
+END$$    
+DELIMITER ;
+
+
+
+
+
+
+-- urlencode
+DELIMITER ;
+ 
+DROP FUNCTION IF EXISTS urlencode;
+ 
+DELIMITER |
+ 
+CREATE FUNCTION URLENCODE(str VARCHAR(4096) CHARSET utf8) RETURNS VARCHAR(4096) CHARSET utf8
+DETERMINISTIC
+CONTAINS SQL
+BEGIN
+   -- the individual character we are converting in our loop
+   -- NOTE: must be VARCHAR even though it won't vary in length
+   -- CHAR(1), when used with SUBSTRING, made spaces '' instead of ' '
+   DECLARE sub VARCHAR(1) CHARSET utf8;
+   -- the ordinal value of the character (i.e. ñ becomes 50097)
+   DECLARE val BIGINT DEFAULT 0;
+   -- the substring index we use in our loop (one-based)
+   DECLARE ind INT DEFAULT 1;
+   -- the integer value of the individual octet of a character being encoded
+   -- (which is potentially multi-byte and must be encoded one byte at a time)
+   DECLARE OCT INT DEFAULT 0;
+   -- the encoded return string that we build up during execution
+   DECLARE ret VARCHAR(4096) DEFAULT '';
+   -- our loop index for looping through each octet while encoding
+   DECLARE octind INT DEFAULT 0;
+ 
+   IF ISNULL(str) THEN
+      RETURN NULL;
+   ELSE
+      SET ret = '';
+      -- loop through the input string one character at a time - regardless
+      -- of how many bytes a character consists of
+      WHILE ind <= CHAR_LENGTH(str) DO
+         SET sub = MID(str, ind, 1);
+         SET val = ORD(sub);
+         -- these values are ones that should not be converted
+         -- see http://tools.ietf.org/html/rfc3986
+         IF NOT (val BETWEEN 48 AND 57 OR     -- 48-57  = 0-9
+                 val BETWEEN 65 AND 90 OR     -- 65-90  = A-Z
+                 val BETWEEN 97 AND 122 OR    -- 97-122 = a-z
+                 -- 45 = hyphen, 46 = period, 95 = underscore, 126 = tilde
+                 val IN (45, 46, 95, 126)) THEN
+            -- This is not an "unreserved" char and must be encoded:
+            -- loop through each octet of the potentially multi-octet character
+            -- and convert each into its hexadecimal value
+            -- we start with the high octect because that is the order that ORD
+            -- returns them in - they need to be encoded with the most significant
+            -- byte first
+            SET octind = OCTET_LENGTH(sub);
+            WHILE octind > 0 DO
+               -- get the actual value of this octet by shifting it to the right
+               -- so that it is at the lowest byte position - in other words, make
+               -- the octet/byte we are working on the entire number (or in even
+               -- other words, oct will no be between zero and 255 inclusive)
+               SET OCT = (val >> (8 * (octind - 1)));
+               -- we append this to our return string with a percent sign, and then
+               -- a left-zero-padded (to two characters) string of the hexadecimal
+               -- value of this octet)
+               SET ret = CONCAT(ret, '%', LPAD(HEX(OCT), 2, 0));
+               -- now we need to reset val to essentially zero out the octet that we
+               -- just encoded so that our number decreases and we are only left with
+               -- the lower octets as part of our integer
+               SET val = (val & (POWER(256, (octind - 1)) - 1));
+               SET octind = (octind - 1);
+            END WHILE;
+         ELSE
+            -- this character was not one that needed to be encoded and can simply be
+            -- added to our return string as-is
+            SET ret = CONCAT(ret, sub);
+         END IF;
+         SET ind = (ind + 1);
+      END WHILE;
+   END IF;
+   RETURN ret;
+END;
+  
+|
+ 
+DELIMITER ;
